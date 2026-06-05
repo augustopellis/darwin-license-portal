@@ -2,6 +2,10 @@
 
 Portale centralizzato di gestione licenze per i software darWIN.
 
+## Documentazione rapida
+
+- [Integrazione applicazioni client](docs/client-integration.md): guida per agenti e sviluppatori che devono far usare questo sistema ad altri prodotti.
+
 ## Prodotti supportati
 
 | Prodotto | ID prodotto |
@@ -24,15 +28,21 @@ darwin-license-portal/
 └── docs/            # Specifiche, ADR, API reference
 ```
 
-## Funzionalità pianificate
+## API principali
 
 ### Server API
-- `POST /api/licenses/generate` — genera una nuova chiave licenza
-- `POST /api/licenses/validate` — valida una chiave (chiamata dai prodotti)
-- `GET  /api/licenses/:key/status` — stato licenza (scadenza, feature flags, utenti max)
-- `GET  /api/licenses` — elenco licenze (admin)
-- `PUT  /api/licenses/:key/revoke` — revoca una licenza
+- `POST /api/licenses/validate` — valida una chiave licenza per un prodotto
+- `GET  /api/licenses/:key/status` — stato pubblico della licenza
 - `GET  /api/health` — health check
+
+### Admin API
+- `POST /api/admin/licenses` — genera una nuova chiave licenza
+- `GET  /api/admin/licenses` — elenco licenze
+- `PUT  /api/admin/licenses/:key/revoke` — revoca una licenza
+- `GET  /api/admin/licenses/:key/log` — log validazioni
+- `GET  /api/admin/stats` — statistiche
+
+Per integrare un prodotto client, usare sempre `POST /api/licenses/validate`.
 
 ### Modello chiave licenza
 ```
@@ -56,7 +66,9 @@ Payload JSON:
 - Licenza revocata: blocco immediato con messaggio di errore
 
 ### Integrazione con pec-to-pdf-converter
-Il prodotto chiama `GET /api/licenses/:key/status` all'avvio e ogni 24h.
+Il prodotto chiama `POST /api/licenses/validate` all'avvio e ogni 24h.
+Vedere la guida completa in [docs/client-integration.md](docs/client-integration.md).
+
 Risposta:
 ```json
 {
@@ -72,10 +84,10 @@ Risposta:
 
 ## Stack tecnologico
 
-- **Server:** Node.js 20, Express, TypeScript, Zod (validazione), SQLite (dev) / PostgreSQL (prod)
+- **Server:** Node.js 20, Express, TypeScript, Zod, SQLite con `better-sqlite3`
 - **Admin UI:** React 18, Vite, TypeScript
-- **Auth admin:** JWT con refresh token
-- **Deployment:** Docker Compose (server + db)
+- **Auth admin:** JWT
+- **Deployment:** Docker Compose
 - **Test:** Vitest, Supertest
 
 ## Setup sviluppo
@@ -114,9 +126,10 @@ npm run dev            # avvia su http://localhost:5173
 ## Roadmap
 
 - [x] Specifiche ADR iniziali
-- [ ] Server API core (generate + validate)
-- [ ] Modello database + migrazioni
-- [ ] Admin UI (CRUD licenze)
+- [x] Server API core (validate + admin generate)
+- [x] Modello database SQLite
+- [x] Admin UI base (CRUD licenze)
+- [x] Documentazione integrazione client
 - [ ] Integrazione pec-to-pdf-converter (LicenseGuard middleware)
 - [ ] Docker Compose deploy
 - [ ] HTTPS + dominio
