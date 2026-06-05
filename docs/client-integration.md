@@ -26,7 +26,7 @@ Ogni app integrata deve definire:
 | `PRODUCT_ID` | Identificativo stabile del prodotto | `PEC2PDF` |
 | `LICENSE_KEY` | Chiave licenza inserita dall'utente o salvata localmente | `eyJ...` |
 
-`PRODUCT_ID` deve combaciare con il `productId` usato quando la licenza viene generata dal pannello admin. Se non combacia, il portale risponde con `WRONG_PRODUCT`.
+`PRODUCT_ID` deve combaciare con un prodotto attivo nel catalogo del pannello admin. Lo stesso valore viene salvato nella licenza quando viene generata. Se non combacia, il portale risponde con `WRONG_PRODUCT`.
 
 ## Contratto API
 
@@ -255,6 +255,11 @@ I client non devono chiamare endpoint admin.
 Endpoint admin attuali:
 
 ```text
+POST /api/admin/login
+GET  /api/admin/products
+POST /api/admin/products
+PUT  /api/admin/products/:id
+DELETE /api/admin/products/:id
 POST /api/admin/licenses
 GET  /api/admin/licenses
 PUT  /api/admin/licenses/:key/revoke

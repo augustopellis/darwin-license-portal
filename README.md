@@ -36,6 +36,11 @@ darwin-license-portal/
 - `GET  /api/health` — health check
 
 ### Admin API
+- `POST /api/admin/login` — login admin e rilascio JWT
+- `GET  /api/admin/products` — catalogo prodotti licenziabili
+- `POST /api/admin/products` — aggiunge un prodotto
+- `PUT  /api/admin/products/:id` — modifica un prodotto
+- `DELETE /api/admin/products/:id` — archivia un prodotto
 - `POST /api/admin/licenses` — genera una nuova chiave licenza
 - `GET  /api/admin/licenses` — elenco licenze
 - `PUT  /api/admin/licenses/:key/revoke` — revoca una licenza
@@ -113,6 +118,8 @@ npm run dev            # avvia su http://localhost:5173
 | `LICENSE_SECRET` | Segreto HMAC-SHA256 (min 32 char) | `change-me-in-production-xxxxx` |
 | `DATABASE_URL` | SQLite path o Postgres URL | `./data/licenses.db` |
 | `ADMIN_JWT_SECRET` | Segreto JWT admin | `another-secret-xxxxx` |
+| `ADMIN_USERNAME` | Username admin iniziale | `admin` |
+| `ADMIN_PASSWORD` | Password admin iniziale | `change-me-before-first-login` |
 | `TRIAL_DAYS` | Durata trial in giorni | `30` |
 
 ## Sicurezza
