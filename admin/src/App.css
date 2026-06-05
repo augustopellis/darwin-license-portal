@@ -1,0 +1,98 @@
+:root {
+  --primary: #4f8ef7;
+  --danger: #f44336;
+  --success: #4caf50;
+  --surface: #1e1e2e;
+  --surface-elevated: #2a2a3e;
+  --text: #e0e0f0;
+  --text-muted: #888aaa;
+  --border: #3a3a5c;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--surface); color: var(--text); font-family: system-ui, sans-serif; }
+
+.app header {
+  display: flex; align-items: center; gap: 2rem;
+  padding: 1rem 2rem; background: var(--surface-elevated);
+  border-bottom: 1px solid var(--border);
+}
+.app header h1 { font-size: 1.2rem; }
+.app header nav { display: flex; gap: .5rem; margin-left: auto; }
+.app header nav button {
+  padding: .4rem .9rem; border: 1px solid var(--border);
+  background: transparent; color: var(--text); border-radius: 4px; cursor: pointer;
+}
+.app header nav button.active { background: var(--primary); border-color: var(--primary); color: white; }
+.app header nav button.logout { border-color: var(--danger); color: var(--danger); }
+main { padding: 2rem; max-width: 1200px; margin: 0 auto; }
+
+.login-form {
+  max-width: 380px; margin: 10vh auto;
+  background: var(--surface-elevated); padding: 2rem; border-radius: 8px;
+}
+.login-form h1 { margin-bottom: 1.5rem; }
+.login-form form { display: flex; flex-direction: column; gap: 1rem; }
+.login-form label { display: flex; flex-direction: column; gap: .3rem; font-size: .9rem; }
+.login-form input {
+  padding: .5rem; background: var(--surface); border: 1px solid var(--border);
+  color: var(--text); border-radius: 4px;
+}
+.login-form button {
+  padding: .6rem; background: var(--primary); color: white;
+  border: none; border-radius: 4px; cursor: pointer; font-size: 1rem;
+}
+
+.dashboard h2, .generate-form h2 { margin-bottom: 1.5rem; }
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 1rem; }
+.stat-card {
+  background: var(--surface-elevated); padding: 1.5rem;
+  border-radius: 8px; border-left: 4px solid;
+}
+.stat-value { font-size: 2rem; font-weight: bold; }
+.stat-label { font-size: .85rem; color: var(--text-muted); margin-top: .3rem; }
+
+.license-table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+.license-table th, .license-table td {
+  padding: .6rem 1rem; text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+.license-table th { font-size: .8rem; text-transform: uppercase; color: var(--text-muted); }
+.license-table tr.revoked td { opacity: .5; text-decoration: line-through; }
+
+.badge {
+  padding: .2rem .5rem; border-radius: 3px; font-size: .75rem; font-weight: bold;
+}
+.badge-trial { background: #ff980022; color: #ff9800; }
+.badge-starter { background: #2196f322; color: #2196f3; }
+.badge-professional { background: #4f8ef722; color: #4f8ef7; }
+.badge-enterprise { background: #9c27b022; color: #9c27b0; }
+
+.btn-danger {
+  padding: .25rem .6rem; background: transparent; border: 1px solid var(--danger);
+  color: var(--danger); border-radius: 3px; cursor: pointer; font-size: .8rem;
+}
+
+.generate-form form { display: flex; flex-direction: column; gap: 1rem; max-width: 500px; }
+.generate-form label { display: flex; flex-direction: column; gap: .3rem; font-size: .9rem; }
+.generate-form input, .generate-form select, .generate-form textarea {
+  padding: .5rem; background: var(--surface); border: 1px solid var(--border);
+  color: var(--text); border-radius: 4px;
+}
+.generate-form button[type=submit] {
+  padding: .6rem; background: var(--primary); color: white;
+  border: none; border-radius: 4px; cursor: pointer;
+}
+
+.generated-key { display: flex; flex-direction: column; gap: 1rem; max-width: 600px; }
+.generated-key textarea {
+  width: 100%; font-family: monospace; font-size: .85rem;
+  background: var(--surface); border: 1px solid var(--border); color: var(--text);
+  padding: .5rem; border-radius: 4px; word-break: break-all;
+}
+.generated-key button {
+  padding: .5rem 1rem; background: var(--surface-elevated); border: 1px solid var(--border);
+  color: var(--text); border-radius: 4px; cursor: pointer;
+}
+
+.error { color: var(--danger); font-size: .9rem; }

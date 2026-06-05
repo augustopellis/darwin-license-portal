@@ -1,0 +1,27 @@
+version: "3.9"
+services:
+  server:
+    build: ./server
+    ports:
+      - "3100:3100"
+    environment:
+      PORT: 3100
+      LICENSE_SECRET: ${LICENSE_SECRET}
+      DATABASE_URL: /data/licenses.db
+      ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET}
+      TRIAL_DAYS: 30
+      CORS_ORIGIN: http://localhost:5173
+    volumes:
+      - license_data:/data
+    restart: unless-stopped
+
+  admin:
+    build: ./admin
+    ports:
+      - "5173:80"
+    depends_on:
+      - server
+    restart: unless-stopped
+
+volumes:
+  license_data:
