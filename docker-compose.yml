@@ -1,16 +1,17 @@
-version: "3.9"
 services:
   server:
     build: ./server
     ports:
       - "3100:3100"
     environment:
-      PORT: 3100
+      PORT: "3100"
       LICENSE_SECRET: ${LICENSE_SECRET}
       DATABASE_URL: /data/licenses.db
       ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET}
-      TRIAL_DAYS: 30
-      CORS_ORIGIN: http://localhost:5173
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      TRIAL_DAYS: "30"
+      CORS_ORIGIN: ${CORS_ORIGIN}
     volumes:
       - license_data:/data
     restart: unless-stopped
@@ -18,7 +19,7 @@ services:
   admin:
     build: ./admin
     ports:
-      - "5173:80"
+      - "80:80"
     depends_on:
       - server
     restart: unless-stopped

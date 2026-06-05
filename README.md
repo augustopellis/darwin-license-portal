@@ -110,6 +110,33 @@ npm install
 npm run dev            # avvia su http://localhost:5173
 ```
 
+## Deploy Docker Compose
+
+Copiare `.env.example` in `.env` nella root del progetto e impostare valori reali:
+
+```bash
+LICENSE_SECRET=<secret-64-char>
+ADMIN_JWT_SECRET=<secret-64-char>
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=<password-admin>
+CORS_ORIGIN=http://<server-ip-o-dominio>
+```
+
+Poi avviare:
+
+```bash
+docker compose up -d --build
+```
+
+Servizi esposti:
+
+| Servizio | Porta | URL locale |
+|----------|-------|------------|
+| Admin UI | `80` | `http://localhost` |
+| API server | `3100` | `http://localhost:3100/api/health` |
+
+Il database SQLite usa il volume Docker `license_data`; non cancellarlo durante gli aggiornamenti.
+
 ## Variabili d'ambiente (server)
 
 | Variabile | Descrizione | Esempio |
