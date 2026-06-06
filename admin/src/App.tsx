@@ -17,9 +17,12 @@ interface License {
   customer_id: string
   customer_name: string | null
   license_type: LicenseType
+  application_type: ApplicationType
+  binding_mode: BindingMode
   issued_at: number
   expires_at: number | null
   max_users: number
+  max_activations: number
   features: string
   revoked: number
   revoked_at?: number | null
@@ -32,6 +35,9 @@ interface Product {
   id: string
   name: string
   description: string
+  applicationType: ApplicationType
+  defaultBindingMode: BindingMode
+  defaultMaxActivations: number
   defaultFeatures: string[]
   active: boolean
   createdAt?: string
@@ -40,6 +46,8 @@ interface Product {
 }
 
 type LicenseType = 'trial' | 'starter' | 'professional' | 'enterprise'
+type ApplicationType = 'desktop' | 'hybrid' | 'web'
+type BindingMode = 'none' | 'workstation' | 'server' | 'tenant'
 type Tab = 'dashboard' | 'licenses' | 'generate' | 'products'
 type StatusFilter = 'all' | 'active' | 'expiring' | 'expired' | 'revoked'
 
@@ -93,6 +101,19 @@ const FEATURE_LIBRARY = [
   { key: 'update', label: 'Update', description: 'Permette aggiornamenti o update channel gestiti.' },
   { key: 'multi_user', label: 'Multi utente', description: 'Consente uso su piu postazioni o utenti.' },
   { key: 'priority_support', label: 'Supporto prioritario', description: 'Segnala clienti con SLA o assistenza dedicata.' },
+]
+
+const APPLICATION_TYPE_OPTIONS: Array<{ id: ApplicationType; label: string; description: string }> = [
+  { id: 'desktop', label: 'Desktop Windows', description: 'Eseguibile installato su una postazione.' },
+  { id: 'hybrid', label: 'Ibrido server', description: 'Applicazione desktop/server, per esempio Delphi + uniGUI.' },
+  { id: 'web', label: 'Web puro', description: 'Applicazione web o TypeScript distribuita per tenant o istanza.' },
+]
+
+const BINDING_MODE_OPTIONS: Array<{ id: BindingMode; label: string; description: string }> = [
+  { id: 'workstation', label: 'Postazione', description: 'Richiede fingerprint macchina: ideale per eseguibili desktop.' },
+  { id: 'server', label: 'Server', description: 'Lega la licenza al server o alla VM che ospita il prodotto.' },
+  { id: 'tenant', label: 'Tenant', description: 'Lega la licenza a tenant, dominio o deployment web.' },
+  { id: 'none', label: 'Nessuno', description: 'Non richiede attivazione. Da usare solo per casi speciali.' },
 ]
 
 function useAdminToken() {
@@ -438,6 +459,7 @@ function LicenseList({ licenses, products, token, onChanged }: {
                   <th>Prodotto</th>
                   <th>Cliente</th>
                   <th>Tipo</th>
+                  <th>Vincolo</th>
                   <th>Scadenza</th>
                   <th>Utenti</th>
                   <th>Stato</th>
@@ -456,6 +478,10 @@ function LicenseList({ licenses, products, token, onChanged }: {
                       <span>{license.customer_id}</span>
                     </td>
                     <td><TypeBadge type={license.license_type} /></td>
+                    <td>
+                      <strong>{bindingModeLabel(license.binding_mode)}</strong>
+                      <span>{applicationTypeLabel(license.application_type)} - {license.max_activations} att.</span>
+                    </td>
                     <td>{formatExpiry(license)}</td>
                     <td>{license.max_users}</td>
                     <td><StatusBadge license={license} /></td>
@@ -486,8 +512,11 @@ function GenerateForm({ token, products, onGenerated }: { token: string; product
     customerId: '',
     customerName: '',
     licenseType: 'professional' as LicenseType,
+    applicationType: (firstProduct?.applicationType ?? 'desktop') as ApplicationType,
+    bindingMode: (firstProduct?.defaultBindingMode ?? 'workstation') as BindingMode,
     expiresInDays: 365,
     maxUsers: 5,
+    maxActivations: firstProduct?.defaultMaxActivations ?? 1,
     features: featureText(firstProduct?.defaultFeatures ?? ['convert', 'protocol', 'update']),
     notes: '',
   })
@@ -495,12 +524,17 @@ function GenerateForm({ token, products, onGenerated }: { token: string; product
   const [error, setError] = useState('')
   const selectedProduct = products.find(product => product.id === form.productId)
   const selectedType = LICENSE_TYPE_OPTIONS.find(type => type.id === form.licenseType) ?? LICENSE_TYPE_OPTIONS[2]
+  const selectedApplicationType = APPLICATION_TYPE_OPTIONS.find(type => type.id === form.applicationType) ?? APPLICATION_TYPE_OPTIONS[0]
+  const selectedBindingMode = BINDING_MODE_OPTIONS.find(mode => mode.id === form.bindingMode) ?? BINDING_MODE_OPTIONS[0]
 
   useEffect(() => {
     if (!firstProduct || products.some(product => product.id === form.productId)) return
     setForm(current => ({
       ...current,
       productId: firstProduct.id,
+      applicationType: firstProduct.applicationType,
+      bindingMode: firstProduct.defaultBindingMode,
+      maxActivations: firstProduct.defaultMaxActivations,
       features: featureText(firstProduct.defaultFeatures),
     }))
   }, [firstProduct?.id, products.length])
@@ -517,6 +551,7 @@ function GenerateForm({ token, products, onGenerated }: { token: string; product
           ...form,
           expiresInDays: Number(form.expiresInDays) || undefined,
           maxUsers: Number(form.maxUsers),
+          maxActivations: Number(form.maxActivations),
           features: parseFeatureInput(form.features),
         }),
       })
@@ -537,7 +572,19 @@ function GenerateForm({ token, products, onGenerated }: { token: string; product
     setForm(current => ({
       ...current,
       productId: e.target.value,
+      applicationType: product?.applicationType ?? current.applicationType,
+      bindingMode: product?.defaultBindingMode ?? current.bindingMode,
+      maxActivations: product?.defaultMaxActivations ?? current.maxActivations,
       features: product ? featureText(product.defaultFeatures) : current.features,
+    }))
+  }
+
+  const setApplicationType = (e: ChangeEvent<HTMLSelectElement>) => {
+    const applicationType = e.target.value as ApplicationType
+    setForm(current => ({
+      ...current,
+      applicationType,
+      bindingMode: defaultBindingModeForApplicationType(applicationType),
     }))
   }
 
@@ -612,7 +659,30 @@ function GenerateForm({ token, products, onGenerated }: { token: string; product
             <label>
               Utenti max
               <input type="number" value={form.maxUsers} onChange={set('maxUsers')} min={1} />
-              <span>Numero massimo di utenti o postazioni coperte dal contratto.</span>
+              <span>Numero massimo di utenti coperti dal contratto.</span>
+            </label>
+          </section>
+
+          <section className="form-section">
+            <h3>Attivazione</h3>
+            <label>
+              Natura app
+              <select value={form.applicationType} onChange={setApplicationType}>
+                {APPLICATION_TYPE_OPTIONS.map(type => <option key={type.id} value={type.id}>{type.label}</option>)}
+              </select>
+              <span>{selectedApplicationType.description}</span>
+            </label>
+            <label>
+              Vincolo
+              <select value={form.bindingMode} onChange={set('bindingMode')}>
+                {BINDING_MODE_OPTIONS.map(mode => <option key={mode.id} value={mode.id}>{mode.label}</option>)}
+              </select>
+              <span>{selectedBindingMode.description}</span>
+            </label>
+            <label>
+              Attivazioni max
+              <input type="number" value={form.maxActivations} onChange={set('maxActivations')} min={1} />
+              <span>Numero di postazioni, server o tenant che possono agganciare questa licenza.</span>
             </label>
           </section>
 
@@ -639,10 +709,21 @@ function ProductManager({ token, products, licenses, onChanged }: {
   licenses: License[]
   onChanged: () => void
 }) {
-  const emptyProduct = { id: '', name: '', description: '', defaultFeatures: 'convert', active: true }
+  const emptyProduct = {
+    id: '',
+    name: '',
+    description: '',
+    applicationType: 'desktop' as ApplicationType,
+    defaultBindingMode: 'workstation' as BindingMode,
+    defaultMaxActivations: 1,
+    defaultFeatures: 'convert',
+    active: true,
+  }
   const [form, setForm] = useState(emptyProduct)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [error, setError] = useState('')
+  const selectedApplicationType = APPLICATION_TYPE_OPTIONS.find(type => type.id === form.applicationType) ?? APPLICATION_TYPE_OPTIONS[0]
+  const selectedBindingMode = BINDING_MODE_OPTIONS.find(mode => mode.id === form.defaultBindingMode) ?? BINDING_MODE_OPTIONS[0]
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -651,6 +732,9 @@ function ProductManager({ token, products, licenses, onChanged }: {
       id: normalizeProductId(form.id),
       name: form.name.trim(),
       description: form.description.trim(),
+      applicationType: form.applicationType,
+      defaultBindingMode: form.defaultBindingMode,
+      defaultMaxActivations: Number(form.defaultMaxActivations),
       defaultFeatures: parseFeatureInput(form.defaultFeatures),
       active: form.active,
     }
@@ -662,6 +746,9 @@ function ProductManager({ token, products, licenses, onChanged }: {
           body: JSON.stringify({
             name: payload.name,
             description: payload.description,
+            applicationType: payload.applicationType,
+            defaultBindingMode: payload.defaultBindingMode,
+            defaultMaxActivations: payload.defaultMaxActivations,
             defaultFeatures: payload.defaultFeatures,
             active: payload.active,
           }),
@@ -686,9 +773,21 @@ function ProductManager({ token, products, licenses, onChanged }: {
       id: product.id,
       name: product.name,
       description: product.description,
+      applicationType: product.applicationType,
+      defaultBindingMode: product.defaultBindingMode,
+      defaultMaxActivations: product.defaultMaxActivations,
       defaultFeatures: featureText(product.defaultFeatures),
       active: product.active,
     })
+  }
+
+  const setProductApplicationType = (e: ChangeEvent<HTMLSelectElement>) => {
+    const applicationType = e.target.value as ApplicationType
+    setForm(current => ({
+      ...current,
+      applicationType,
+      defaultBindingMode: defaultBindingModeForApplicationType(applicationType),
+    }))
   }
 
   const archive = async (product: Product) => {
@@ -731,6 +830,30 @@ function ProductManager({ token, products, licenses, onChanged }: {
             <textarea value={form.description} onChange={e => setForm(current => ({ ...current, description: e.target.value }))} rows={4} />
             <span>Breve nota operativa per distinguere prodotto, modulo o verticale.</span>
           </label>
+          <label>
+            Natura app
+            <select value={form.applicationType} onChange={setProductApplicationType}>
+              {APPLICATION_TYPE_OPTIONS.map(type => <option key={type.id} value={type.id}>{type.label}</option>)}
+            </select>
+            <span>{selectedApplicationType.description}</span>
+          </label>
+          <label>
+            Vincolo default
+            <select value={form.defaultBindingMode} onChange={e => setForm(current => ({ ...current, defaultBindingMode: e.target.value as BindingMode }))}>
+              {BINDING_MODE_OPTIONS.map(mode => <option key={mode.id} value={mode.id}>{mode.label}</option>)}
+            </select>
+            <span>{selectedBindingMode.description}</span>
+          </label>
+          <label>
+            Attivazioni default
+            <input
+              type="number"
+              value={form.defaultMaxActivations}
+              onChange={e => setForm(current => ({ ...current, defaultMaxActivations: Number(e.target.value) || 1 }))}
+              min={1}
+            />
+            <span>Default usato quando generi una nuova licenza per questo prodotto.</span>
+          </label>
           <FeaturePicker value={form.defaultFeatures} onChange={features => setForm(current => ({ ...current, defaultFeatures: features }))} />
           <label className="checkbox-field">
             <input type="checkbox" checked={form.active} onChange={e => setForm(current => ({ ...current, active: e.target.checked }))} />
@@ -759,7 +882,11 @@ function ProductManager({ token, products, licenses, onChanged }: {
                 <div className="mini-metrics">
                   <span>{productLicenses.length} licenze</span>
                   <span>{productLicenses.filter(isActiveLicense).length} attive</span>
-                  <span>{product.defaultFeatures.length} feature</span>
+                  <span>{bindingModeLabel(product.defaultBindingMode)}</span>
+                </div>
+                <div className="feature-tags">
+                  <span>{applicationTypeLabel(product.applicationType)}</span>
+                  <span>{product.defaultMaxActivations} att.</span>
                 </div>
                 <FeatureTags features={product.defaultFeatures} />
                 <div className="button-row">
@@ -829,6 +956,9 @@ function LicenseDetails({ license, products, onCopy, onRevoke }: {
         <div><dt>Cliente</dt><dd>{license.customer_name || license.customer_id}</dd></div>
         <div><dt>Prodotto</dt><dd>{productName(products, license.product_id)} ({license.product_id})</dd></div>
         <div><dt>Tipo</dt><dd><TypeBadge type={license.license_type} /></dd></div>
+        <div><dt>App</dt><dd>{applicationTypeLabel(license.application_type)}</dd></div>
+        <div><dt>Vincolo</dt><dd>{bindingModeLabel(license.binding_mode)}</dd></div>
+        <div><dt>Attivazioni</dt><dd>{license.max_activations}</dd></div>
         <div><dt>Scadenza</dt><dd>{formatExpiry(license)}</dd></div>
         <div><dt>Utenti</dt><dd>{license.max_users}</dd></div>
       </dl>
@@ -1046,6 +1176,23 @@ function formatDate(seconds: number): string {
 
 function productName(products: Product[], productId: string): string {
   return products.find(product => product.id === productId)?.name ?? productId
+}
+
+function applicationTypeLabel(type: ApplicationType): string {
+  return APPLICATION_TYPE_OPTIONS.find(option => option.id === type)?.label ?? type
+}
+
+function bindingModeLabel(mode: BindingMode): string {
+  return BINDING_MODE_OPTIONS.find(option => option.id === mode)?.label ?? mode
+}
+
+function defaultBindingModeForApplicationType(type: ApplicationType): BindingMode {
+  const map: Record<ApplicationType, BindingMode> = {
+    desktop: 'workstation',
+    hybrid: 'server',
+    web: 'tenant',
+  }
+  return map[type]
 }
 
 function copyText(value: string): void {

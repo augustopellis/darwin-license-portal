@@ -25,8 +25,44 @@ Ogni app integrata deve definire:
 | `LICENSE_API_BASE_URL` | Base URL del portale licenze | `http://188.213.171.141:3100` |
 | `PRODUCT_ID` | Identificativo stabile del prodotto | `PEC2PDF` |
 | `LICENSE_KEY` | Chiave licenza inserita dall'utente o salvata localmente | `eyJ...` |
+| `APPLICATION_TYPE` | Natura dell'app: `desktop`, `hybrid`, `web` | `desktop` |
+| `INSTANCE_FINGERPRINT` | Fingerprint stabile di postazione/server/tenant quando richiesto | `sha256:...` |
 
 `PRODUCT_ID` deve combaciare con un prodotto attivo nel catalogo del pannello admin. Lo stesso valore viene salvato nella licenza quando viene generata. Se non combacia, il portale risponde con `WRONG_PRODUCT`.
+
+## Tipi di applicazione e vincolo licenza
+
+La licenza puo' essere generata per tre nature applicative:
+
+| Tipo | Uso | Vincolo consigliato |
+|------|-----|---------------------|
+| `desktop` | Eseguibile Windows installato su PC dell'utente | `workstation` |
+| `hybrid` | Applicazione Delphi + uniGUI, servizio locale, server aziendale | `server` |
+| `web` | Web app TypeScript/backend, SaaS, portale tenant | `tenant` |
+
+Il vincolo decide quale identificativo deve accompagnare la validazione:
+
+| `bindingMode` | Fingerprint atteso | Quando usarlo |
+|---------------|--------------------|--------------|
+| `workstation` | Postazione fisica o profilo macchina Windows | Desktop/exe |
+| `server` | Server, VM, servizio o installazione backend | Hybrid/on-prem |
+| `tenant` | Tenant, dominio, deployment o istanza cliente | Web/SaaS |
+| `none` | Nessuno | Solo eccezioni consapevoli |
+
+Per licenze vincolate, la prima validazione registra l'attivazione lato portale. Le validazioni successive dallo stesso fingerprint sono accettate; un fingerprint nuovo consuma un'altra attivazione fino a `maxActivations`. Oltre il limite l'API risponde con `ACTIVATION_LIMIT_EXCEEDED`.
+
+Il portale salva solo un hash HMAC del fingerprint, non il valore in chiaro.
+
+### Fingerprint desktop Windows
+
+Per un eseguibile desktop bisogna calcolare un identificativo stabile della postazione prima di chiamare `/validate`. In pratica:
+
+- usare valori stabili come MachineGuid Windows, SID utente/macchina o un installation-id creato alla prima installazione;
+- normalizzare e fare hash localmente prima dell'invio, evitando seriali hardware in chiaro;
+- non cambiare fingerprint a ogni avvio, altrimenti ogni esecuzione consuma una nuova attivazione;
+- inviare anche `fingerprintLabel` opzionale, per esempio nome PC o reparto, utile al supporto.
+
+Per web puro, un browser non offre un fingerprint affidabile e non manomettibile: la validazione licenza va fatta preferibilmente dal backend dell'app, usando un `tenantId`, dominio o deployment-id stabile.
 
 ## Contratto API
 
@@ -59,9 +95,14 @@ Body:
 ```json
 {
   "key": "LICENSE_KEY_OPACA",
-  "productId": "PEC2PDF"
+  "productId": "PEC2PDF",
+  "applicationType": "desktop",
+  "machineFingerprint": "sha256-del-fingerprint-locale",
+  "fingerprintLabel": "PC-AMMINISTRAZIONE-01"
 }
 ```
+
+`machineFingerprint`, `installationId`, `instanceId` e `fingerprint` sono alias accettati. Per licenze `bindingMode: none` il fingerprint non e' richiesto.
 
 Risposta valida:
 
@@ -71,9 +112,13 @@ Risposta valida:
   "productId": "PEC2PDF",
   "customerId": "ACME_001",
   "licenseType": "professional",
+  "applicationType": "desktop",
+  "bindingMode": "workstation",
   "expiresAt": "2027-01-15T00:00:00.000Z",
   "daysLeft": 224,
   "maxUsers": 5,
+  "maxActivations": 1,
+  "activationsUsed": 1,
   "features": ["convert", "protocol", "update"]
 }
 ```
@@ -98,6 +143,10 @@ Errori principali:
 | `403` | `MALFORMED_KEY` | Formato chiave non valido | Richiedere reinserimento |
 | `403` | `MALFORMED_PAYLOAD` | Payload non decodificabile | Richiedere reinserimento |
 | `403` | `WRONG_PRODUCT` | Licenza valida ma per altro prodotto | Bloccare uso per questo prodotto |
+| `403` | `WRONG_APPLICATION_TYPE` | Licenza emessa per un'altra natura app | Bloccare e controllare configurazione prodotto |
+| `400` | `FINGERPRINT_REQUIRED` | Licenza vincolata ma fingerprint mancante | Calcolare e inviare fingerprint stabile |
+| `403` | `ACTIVATION_LIMIT_EXCEEDED` | Troppe postazioni/server/tenant attivati | Chiedere nuova licenza o revocare una vecchia attivazione |
+| `403` | `ACTIVATION_REVOKED` | Questa postazione/istanza e' stata revocata | Bloccare uso su quella macchina/istanza |
 | `403` | `LICENSE_REVOKED` | Licenza revocata nel portale | Bloccare subito le funzioni licenziate |
 | `429` | `TOO_MANY_REQUESTS` | Troppe validazioni ravvicinate | Usare cache locale e ritentare piu' tardi |
 
@@ -164,9 +213,13 @@ type LicenseValidationOk = {
   productId: string
   customerId: string
   licenseType: 'trial' | 'starter' | 'professional' | 'enterprise'
+  applicationType: 'desktop' | 'hybrid' | 'web'
+  bindingMode: 'none' | 'workstation' | 'server' | 'tenant'
   expiresAt: string | null
   daysLeft: number | null
   maxUsers: number
+  maxActivations: number
+  activationsUsed: number | null
   features: string[]
 }
 
@@ -182,6 +235,9 @@ export async function validateLicense(params: {
   apiBaseUrl: string
   productId: string
   licenseKey: string
+  applicationType: 'desktop' | 'hybrid' | 'web'
+  fingerprint?: string
+  fingerprintLabel?: string
 }): Promise<LicenseValidationResult> {
   const response = await fetch(`${params.apiBaseUrl}/api/licenses/validate`, {
     method: 'POST',
@@ -189,6 +245,9 @@ export async function validateLicense(params: {
     body: JSON.stringify({
       key: params.licenseKey,
       productId: params.productId,
+      applicationType: params.applicationType,
+      fingerprint: params.fingerprint,
+      fingerprintLabel: params.fingerprintLabel,
     }),
   })
 
@@ -213,13 +272,25 @@ export function hasFeature(result: LicenseValidationResult, feature: string): bo
 ## Esempio Python
 
 ```python
+import hashlib
 import requests
+
+
+def build_machine_fingerprint() -> str:
+    # Sostituire con valori stabili della propria app/macchina.
+    raw = "windows-machine-guid|user-or-machine-sid|product-id"
+    return "sha256:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def validate_license(api_base_url: str, product_id: str, license_key: str) -> dict:
     response = requests.post(
         f"{api_base_url}/api/licenses/validate",
-        json={"key": license_key, "productId": product_id},
+        json={
+            "key": license_key,
+            "productId": product_id,
+            "applicationType": "desktop",
+            "machineFingerprint": build_machine_fingerprint(),
+        },
         timeout=10,
     )
 
@@ -240,6 +311,7 @@ Quando integri un'app con questo portale:
 
 - Aggiungi una configurazione `LICENSE_API_BASE_URL`.
 - Definisci un `PRODUCT_ID` stabile e documentalo nel repo dell'app.
+- Definisci `APPLICATION_TYPE` e il fingerprint coerente con il tipo di app.
 - Implementa una funzione unica di validazione che chiama `POST /api/licenses/validate`.
 - Salva la licenza in modo coerente con il tipo di app: file config, keychain, database utente o storage locale.
 - Applica le feature dal campo `features`.
@@ -264,6 +336,8 @@ POST /api/admin/licenses
 GET  /api/admin/licenses
 PUT  /api/admin/licenses/:key/revoke
 GET  /api/admin/licenses/:key/log
+GET  /api/admin/licenses/:key/activations
+PUT  /api/admin/licenses/:key/activations/:id/revoke
 GET  /api/admin/stats
 ```
 

@@ -1,17 +1,29 @@
 import { Router } from 'express'
 import { z } from 'zod'
-import { generateLicenseKey, LicensePayload } from '../license/keyManager.js'
+import {
+  BindingMode,
+  ApplicationType,
+  defaultBindingModeForApplicationType,
+  generateLicenseKey,
+  LicensePayload,
+} from '../license/keyManager.js'
 import { db } from '../db/database.js'
 
 export const adminRouter = Router()
+
+const ApplicationTypeSchema = z.enum(['desktop', 'hybrid', 'web'])
+const BindingModeSchema = z.enum(['none', 'workstation', 'server', 'tenant'])
 
 const GenerateLicenseSchema = z.object({
   productId: z.string().min(1),
   customerId: z.string().min(1),
   customerName: z.string().optional(),
   licenseType: z.enum(['trial', 'starter', 'professional', 'enterprise']).default('professional'),
+  applicationType: ApplicationTypeSchema.optional(),
+  bindingMode: BindingModeSchema.optional(),
   expiresInDays: z.number().int().positive().optional(), // null = perpetua
   maxUsers: z.number().int().positive().default(1),
+  maxActivations: z.number().int().positive().optional(),
   features: z.array(z.string()).default(['convert']),
   notes: z.string().optional(),
 })
@@ -20,16 +32,30 @@ const ProductSchema = z.object({
   id: z.string().min(2).max(32).regex(/^[A-Z0-9_-]+$/),
   name: z.string().min(2),
   description: z.string().optional().default(''),
+  applicationType: ApplicationTypeSchema.default('desktop'),
+  defaultBindingMode: BindingModeSchema.optional(),
+  defaultMaxActivations: z.number().int().positive().default(1),
   defaultFeatures: z.array(z.string().min(1)).default([]),
   active: z.boolean().default(true),
 })
 
-const UpdateProductSchema = ProductSchema.omit({ id: true }).partial()
+const UpdateProductSchema = z.object({
+  name: z.string().min(2).optional(),
+  description: z.string().optional(),
+  applicationType: ApplicationTypeSchema.optional(),
+  defaultBindingMode: BindingModeSchema.optional(),
+  defaultMaxActivations: z.number().int().positive().optional(),
+  defaultFeatures: z.array(z.string().min(1)).optional(),
+  active: z.boolean().optional(),
+})
 
 type ProductRow = {
   id: string
   name: string
   description: string | null
+  application_type: ApplicationType
+  default_binding_mode: BindingMode
+  default_max_activations: number
   default_features: string
   active: number
   created_at: number
@@ -68,11 +94,25 @@ adminRouter.post('/products', (req, res) => {
   }
 
   const d = parse.data
+  const applicationType = d.applicationType
+  const defaultBindingMode = d.defaultBindingMode ?? defaultBindingModeForApplicationType(applicationType)
   try {
     db.prepare(`
-      INSERT INTO products (id, name, description, default_features, active)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(d.id.toUpperCase(), d.name, d.description || null, JSON.stringify(normalizeFeatures(d.defaultFeatures)), d.active ? 1 : 0)
+      INSERT INTO products (
+        id, name, description, application_type, default_binding_mode,
+        default_max_activations, default_features, active
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      d.id.toUpperCase(),
+      d.name,
+      d.description || null,
+      applicationType,
+      defaultBindingMode,
+      d.defaultMaxActivations,
+      JSON.stringify(normalizeFeatures(d.defaultFeatures)),
+      d.active ? 1 : 0
+    )
   } catch (err: any) {
     if (err?.code === 'SQLITE_CONSTRAINT_PRIMARYKEY' || err?.code === 'SQLITE_CONSTRAINT_UNIQUE') {
       res.status(409).json({ error: 'DUPLICATE_PRODUCT', message: 'Esiste gia un prodotto con questo ID.' })
@@ -104,13 +144,20 @@ adminRouter.put('/products/:id', (req, res) => {
   }
 
   const d = parse.data
+  const nextApplicationType = d.applicationType ?? current.application_type
+  const nextBindingMode = d.defaultBindingMode
+    ?? (d.applicationType && !parse.data.defaultBindingMode ? defaultBindingModeForApplicationType(nextApplicationType) : current.default_binding_mode)
   db.prepare(`
     UPDATE products
-    SET name = ?, description = ?, default_features = ?, active = ?
+    SET name = ?, description = ?, application_type = ?, default_binding_mode = ?,
+        default_max_activations = ?, default_features = ?, active = ?
     WHERE id = ?
   `).run(
     d.name ?? current.name,
     d.description ?? current.description,
+    nextApplicationType,
+    nextBindingMode,
+    d.defaultMaxActivations ?? current.default_max_activations,
     d.defaultFeatures ? JSON.stringify(normalizeFeatures(d.defaultFeatures)) : current.default_features,
     d.active === undefined ? current.active : d.active ? 1 : 0,
     productId
@@ -148,7 +195,16 @@ adminRouter.post('/licenses', (req, res) => {
   }
 
   const d = parse.data
-  const product = db.prepare('SELECT active FROM products WHERE id = ?').get(d.productId) as { active: number } | undefined
+  const product = db.prepare(`
+    SELECT active, application_type, default_binding_mode, default_max_activations
+    FROM products
+    WHERE id = ?
+  `).get(d.productId) as {
+    active: number
+    application_type: ApplicationType
+    default_binding_mode: BindingMode
+    default_max_activations: number
+  } | undefined
   if (!product) {
     res.status(400).json({ error: 'UNKNOWN_PRODUCT', message: 'Prodotto non presente nel catalogo licenze.' })
     return
@@ -160,14 +216,20 @@ adminRouter.post('/licenses', (req, res) => {
 
   const issuedAt = Math.floor(Date.now() / 1000)
   const expiresAt = d.expiresInDays ? issuedAt + d.expiresInDays * 86400 : null
+  const applicationType = d.applicationType ?? product.application_type
+  const bindingMode = d.bindingMode ?? product.default_binding_mode ?? defaultBindingModeForApplicationType(applicationType)
+  const maxActivations = d.maxActivations ?? product.default_max_activations ?? 1
 
   const payload: LicensePayload = {
     productId: d.productId,
     customerId: d.customerId,
     licenseType: d.licenseType,
+    applicationType,
+    bindingMode,
     issuedAt,
     expiresAt,
     maxUsers: d.maxUsers,
+    maxActivations,
     features: d.features,
   }
 
@@ -175,9 +237,27 @@ adminRouter.post('/licenses', (req, res) => {
 
   try {
     db.prepare(`
-      INSERT INTO licenses (key, product_id, customer_id, customer_name, license_type, issued_at, expires_at, max_users, features, notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(key, d.productId, d.customerId, d.customerName ?? null, d.licenseType, issuedAt, expiresAt, d.maxUsers, JSON.stringify(d.features), d.notes ?? null)
+      INSERT INTO licenses (
+        key, product_id, customer_id, customer_name, license_type,
+        application_type, binding_mode, issued_at, expires_at,
+        max_users, max_activations, features, notes
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      key,
+      d.productId,
+      d.customerId,
+      d.customerName ?? null,
+      d.licenseType,
+      applicationType,
+      bindingMode,
+      issuedAt,
+      expiresAt,
+      d.maxUsers,
+      maxActivations,
+      JSON.stringify(d.features),
+      d.notes ?? null
+    )
   } catch (err: any) {
     if (err?.code === 'SQLITE_CONSTRAINT_UNIQUE') {
       res.status(409).json({ error: 'DUPLICATE_KEY', message: 'Chiave licenza già esistente (collisione estremamente rara).' })
@@ -192,9 +272,12 @@ adminRouter.post('/licenses', (req, res) => {
     customerId: d.customerId,
     customerName: d.customerName,
     licenseType: d.licenseType,
+    applicationType,
+    bindingMode,
     issuedAt: new Date(issuedAt * 1000).toISOString(),
     expiresAt: expiresAt ? new Date(expiresAt * 1000).toISOString() : null,
     maxUsers: d.maxUsers,
+    maxActivations,
     features: d.features,
   })
 })
@@ -252,6 +335,47 @@ adminRouter.get('/licenses/:key/log', (req, res) => {
 })
 
 /**
+ * GET /api/admin/licenses/:key/activations
+ * Postazioni/istanze attivate per una licenza.
+ */
+adminRouter.get('/licenses/:key/activations', (req, res) => {
+  const { key } = req.params
+  const rows = db.prepare(`
+    SELECT
+      id, product_id, application_type, binding_mode,
+      substr(fingerprint_hash, 1, 16) as fingerprint_hash,
+      fingerprint_label, first_seen_at, last_seen_at, last_ip,
+      revoked, revoked_at, revoke_reason
+    FROM license_activations
+    WHERE license_key = ?
+    ORDER BY revoked ASC, last_seen_at DESC
+  `).all(key)
+  res.json({ activations: rows })
+})
+
+/**
+ * PUT /api/admin/licenses/:key/activations/:id/revoke
+ * Revoca una singola attivazione per liberare una postazione/istanza.
+ */
+adminRouter.put('/licenses/:key/activations/:id/revoke', (req, res) => {
+  const { key, id } = req.params
+  const { reason } = req.body as { reason?: string }
+
+  const result = db.prepare(`
+    UPDATE license_activations
+    SET revoked = 1, revoked_at = unixepoch(), revoke_reason = ?
+    WHERE id = ? AND license_key = ? AND revoked = 0
+  `).run(reason ?? null, id, key)
+
+  if (result.changes === 0) {
+    res.status(404).json({ error: 'NOT_FOUND', message: 'Attivazione non trovata o gia revocata.' })
+    return
+  }
+
+  res.json({ revoked: true, activationId: Number(id), key })
+})
+
+/**
  * GET /api/admin/stats
  * Statistiche generali.
  */
@@ -269,6 +393,9 @@ function serializeProduct(row: ProductRow) {
     id: row.id,
     name: row.name,
     description: row.description ?? '',
+    applicationType: row.application_type,
+    defaultBindingMode: row.default_binding_mode,
+    defaultMaxActivations: Number(row.default_max_activations ?? 1),
     defaultFeatures: parseFeatures(row.default_features),
     active: Boolean(row.active),
     createdAt: new Date(row.created_at * 1000).toISOString(),

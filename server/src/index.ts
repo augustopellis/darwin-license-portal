@@ -47,9 +47,11 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 // Init DB e avvio
 initDb()
 ensureAdminUser()
-app.listen(PORT, () => {
-  console.log(`[darwin-license-portal] Server avviato su http://localhost:${PORT}`)
-  console.log(`[darwin-license-portal] Admin API su http://localhost:${PORT}/api/admin`)
-})
+if (process.env.NODE_ENV !== 'test') {
+  app.listen(PORT, () => {
+    console.log(`[darwin-license-portal] Server avviato su http://localhost:${PORT}`)
+    console.log(`[darwin-license-portal] Admin API su http://localhost:${PORT}/api/admin`)
+  })
+}
 
 export { app }

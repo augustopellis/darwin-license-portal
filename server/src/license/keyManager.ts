@@ -1,9 +1,12 @@
 import crypto from 'node:crypto'
 
-const SECRET = process.env.LICENSE_SECRET
-if (!SECRET || SECRET.length < 32) {
-  console.warn('[license] WARNING: LICENSE_SECRET troppo corta o non impostata!')
-}
+export const APPLICATION_TYPES = ['desktop', 'hybrid', 'web'] as const
+export const BINDING_MODES = ['none', 'workstation', 'server', 'tenant'] as const
+
+export type ApplicationType = typeof APPLICATION_TYPES[number]
+export type BindingMode = typeof BINDING_MODES[number]
+
+let warnedAboutWeakSecret = false
 
 export interface LicensePayload {
   productId: string
@@ -13,6 +16,64 @@ export interface LicensePayload {
   expiresAt: number | null  // null = licenza perpetua
   maxUsers: number
   features: string[]
+  applicationType?: ApplicationType
+  bindingMode?: BindingMode
+  maxActivations?: number
+}
+
+export interface NormalizedLicensePayload extends LicensePayload {
+  applicationType: ApplicationType
+  bindingMode: BindingMode
+  maxActivations: number
+}
+
+export function getLicenseSecret(): string {
+  const secret = process.env.LICENSE_SECRET
+  if ((!secret || secret.length < 32) && !warnedAboutWeakSecret) {
+    warnedAboutWeakSecret = true
+    console.warn('[license] WARNING: LICENSE_SECRET troppo corta o non impostata!')
+  }
+  return secret ?? 'insecure-dev-secret'
+}
+
+export function defaultBindingModeForApplicationType(applicationType: ApplicationType): BindingMode {
+  const map: Record<ApplicationType, BindingMode> = {
+    desktop: 'workstation',
+    hybrid: 'server',
+    web: 'tenant',
+  }
+  return map[applicationType]
+}
+
+export function isApplicationType(value: unknown): value is ApplicationType {
+  return typeof value === 'string' && (APPLICATION_TYPES as readonly string[]).includes(value)
+}
+
+export function isBindingMode(value: unknown): value is BindingMode {
+  return typeof value === 'string' && (BINDING_MODES as readonly string[]).includes(value)
+}
+
+export function normalizeLicensePayload(payload: LicensePayload): NormalizedLicensePayload {
+  let applicationType: ApplicationType = 'desktop'
+  let hasExplicitApplicationType = false
+  if (isApplicationType(payload.applicationType)) {
+    applicationType = payload.applicationType
+    hasExplicitApplicationType = true
+  }
+
+  const bindingMode = isBindingMode(payload.bindingMode)
+    ? payload.bindingMode
+    : hasExplicitApplicationType
+      ? defaultBindingModeForApplicationType(applicationType)
+      : 'none'
+  const maxActivations = Math.max(1, Math.trunc(Number(payload.maxActivations ?? payload.maxUsers ?? 1)))
+
+  return {
+    ...payload,
+    applicationType,
+    bindingMode,
+    maxActivations,
+  }
 }
 
 /**
@@ -20,7 +81,7 @@ export interface LicensePayload {
  * Formato: base64url(payload_json).base64url(hmac)
  */
 export function generateLicenseKey(payload: LicensePayload): string {
-  const secret = SECRET ?? 'insecure-dev-secret'
+  const secret = getLicenseSecret()
   const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url')
   const hmac = crypto
     .createHmac('sha256', secret)
@@ -34,7 +95,7 @@ export function generateLicenseKey(payload: LicensePayload): string {
  * Verifica firma HMAC e scadenza.
  */
 export function validateLicenseKey(key: string): { valid: true; payload: LicensePayload } | { valid: false; reason: string } {
-  const secret = SECRET ?? 'insecure-dev-secret'
+  const secret = getLicenseSecret()
   const parts = key.split('.')
   if (parts.length !== 2) return { valid: false, reason: 'MALFORMED_KEY' }
 
@@ -45,10 +106,8 @@ export function validateLicenseKey(key: string): { valid: true; payload: License
     .createHmac('sha256', secret)
     .update(payloadB64)
     .digest('base64url')
-  const timingSafe = crypto.timingSafeEqual(
-    Buffer.from(receivedHmac),
-    Buffer.from(expectedHmac)
-  )
+  if (receivedHmac.length !== expectedHmac.length) return { valid: false, reason: 'INVALID_SIGNATURE' }
+  const timingSafe = crypto.timingSafeEqual(Buffer.from(receivedHmac), Buffer.from(expectedHmac))
   if (!timingSafe) return { valid: false, reason: 'INVALID_SIGNATURE' }
 
   // Decodifica payload

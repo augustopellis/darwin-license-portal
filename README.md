@@ -45,6 +45,8 @@ darwin-license-portal/
 - `GET  /api/admin/licenses` — elenco licenze
 - `PUT  /api/admin/licenses/:key/revoke` — revoca una licenza
 - `GET  /api/admin/licenses/:key/log` — log validazioni
+- `GET  /api/admin/licenses/:key/activations` — elenco postazioni/istanze attivate
+- `PUT  /api/admin/licenses/:key/activations/:id/revoke` — revoca una singola attivazione
 - `GET  /api/admin/stats` — statistiche
 
 Per integrare un prodotto client, usare sempre `POST /api/licenses/validate`.
@@ -58,12 +60,26 @@ Payload JSON:
   "productId":   "PEC2PDF",
   "customerId":  "ACME_001",
   "licenseType": "professional",  // trial | starter | professional | enterprise
+  "applicationType": "desktop",    // desktop | hybrid | web
+  "bindingMode": "workstation",    // none | workstation | server | tenant
   "issuedAt":    1748000000,       // Unix timestamp
   "expiresAt":   1779536000,       // Unix timestamp (null = perpetua)
   "maxUsers":    5,
+  "maxActivations": 1,
   "features":    ["convert","protocol","update"]
 }
 ```
+
+### Logica di attivazione
+
+La firma HMAC garantisce che la chiave non sia stata modificata. Il legame con la macchina/istanza avviene alla validazione:
+
+- `desktop` usa di default `bindingMode: workstation` e richiede un fingerprint stabile della postazione;
+- `hybrid` usa di default `bindingMode: server` per server, VM o servizio on-prem;
+- `web` usa di default `bindingMode: tenant` per tenant, dominio o deployment;
+- `none` mantiene il comportamento storico senza binding, da usare solo se voluto.
+
+Per licenze vincolate, la prima chiamata a `POST /api/licenses/validate` registra l'attivazione. Lo stesso fingerprint viene riaccettato, un fingerprint nuovo consuma un altro slot fino a `maxActivations`. Oltre il limite l'API risponde con `ACTIVATION_LIMIT_EXCEEDED`. Il database salva solo l'hash del fingerprint.
 
 ### Trial policy
 - Senza licenza: 30 giorni di trial completo dalla prima esecuzione
@@ -80,10 +96,14 @@ Risposta:
   "valid": true,
   "productId": "PEC2PDF",
   "licenseType": "professional",
+  "applicationType": "desktop",
+  "bindingMode": "workstation",
   "expiresAt": "2027-01-15T00:00:00Z",
   "daysLeft": 224,
   "features": ["convert","protocol","update"],
-  "maxUsers": 5
+  "maxUsers": 5,
+  "maxActivations": 1,
+  "activationsUsed": 1
 }
 ```
 
@@ -153,6 +173,7 @@ Il database SQLite usa il volume Docker `license_data`; non cancellarlo durante 
 
 - `LICENSE_SECRET` non viene mai distribuito nei prodotti client
 - Il prodotto invia solo la chiave opaca al server per validarla
+- Per licenze vincolate il client invia un fingerprint gia normalizzato/hashato; il server lo salva come hash HMAC
 - Rate limiting su `/api/licenses/validate` (max 10 req/min per IP)
 - HTTPS obbligatorio in produzione
 - Log di ogni validazione con timestamp e IP
