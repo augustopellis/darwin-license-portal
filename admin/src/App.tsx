@@ -51,6 +51,16 @@ type BindingMode = 'none' | 'workstation' | 'server' | 'tenant'
 type Tab = 'dashboard' | 'licenses' | 'generate' | 'products'
 type StatusFilter = 'all' | 'active' | 'expiring' | 'expired' | 'revoked'
 
+interface EditLicenseForm {
+  customerId: string
+  customerName: string
+  licenseType: LicenseType
+  maxUsers: number
+  maxActivations: number
+  features: string
+  notes: string
+}
+
 const API = '/api'
 
 const LICENSE_TYPE_OPTIONS: Array<{
@@ -372,6 +382,7 @@ function LicenseList({ licenses, products, token, onChanged }: {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [typeFilter, setTypeFilter] = useState<'all' | LicenseType>('all')
   const [selectedId, setSelectedId] = useState<number | null>(licenses[0]?.id ?? null)
+  const [editingLicense, setEditingLicense] = useState<License | null>(null)
 
   const filteredLicenses = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
@@ -404,6 +415,13 @@ function LicenseList({ licenses, products, token, onChanged }: {
       method: 'PUT',
       body: JSON.stringify({ reason }),
     })
+    onChanged()
+  }
+
+  const deleteLicense = async (key: string) => {
+    if (!confirm('Eliminare definitivamente questa licenza? L\'operazione non è reversibile.')) return
+    await requestJson(`/admin/licenses/${encodeURIComponent(key)}`, token, { method: 'DELETE' })
+    if (selected?.key === key) setSelectedId(null)
     onChanged()
   }
 
@@ -488,7 +506,9 @@ function LicenseList({ licenses, products, token, onChanged }: {
                     <td>
                       <div className="row-actions">
                         <button type="button" className="secondary-button small" onClick={() => setSelectedId(license.id)}>Dettagli</button>
+                        <button type="button" className="secondary-button small" onClick={() => setEditingLicense(license)}>Modifica</button>
                         {!license.revoked && <button type="button" className="danger-button small" onClick={() => revoke(license.key)}>Revoca</button>}
+                        <button type="button" className="danger-button small" onClick={() => deleteLicense(license.key)}>Elimina</button>
                       </div>
                     </td>
                   </tr>
@@ -498,8 +518,17 @@ function LicenseList({ licenses, products, token, onChanged }: {
           )}
         </div>
 
-        <LicenseDetails license={selected} products={products} onCopy={copyText} onRevoke={revoke} />
+        <LicenseDetails license={selected} products={products} onCopy={copyText} onRevoke={revoke} onEdit={setEditingLicense} onDelete={deleteLicense} />
       </section>
+
+      {editingLicense && (
+        <EditLicenseModal
+          license={editingLicense}
+          token={token}
+          onClose={() => setEditingLicense(null)}
+          onSaved={() => { setEditingLicense(null); onChanged() }}
+        />
+      )}
     </div>
   )
 }
@@ -936,11 +965,13 @@ function FeaturePicker({ value, onChange }: { value: string; onChange: (value: s
   )
 }
 
-function LicenseDetails({ license, products, onCopy, onRevoke }: {
+function LicenseDetails({ license, products, onCopy, onRevoke, onEdit, onDelete }: {
   license: License | null
   products: Product[]
   onCopy: (value: string) => void
   onRevoke: (key: string) => void
+  onEdit: (license: License) => void
+  onDelete: (key: string) => void
 }) {
   if (!license) {
     return <aside className="detail-panel"><EmptyState title="Nessun dettaglio" text="Seleziona una licenza dalla tabella." /></aside>
@@ -967,9 +998,111 @@ function LicenseDetails({ license, products, onCopy, onRevoke }: {
       <textarea className="key-field" readOnly value={license.key} rows={4} />
       <div className="button-row">
         <button type="button" className="secondary-button" onClick={() => onCopy(license.key)}>Copia chiave</button>
+        <button type="button" className="secondary-button" onClick={() => onEdit(license)}>Modifica</button>
         {!license.revoked && <button type="button" className="danger-button" onClick={() => onRevoke(license.key)}>Revoca</button>}
+        <button type="button" className="danger-button" onClick={() => onDelete(license.key)}>Elimina</button>
       </div>
     </aside>
+  )
+}
+
+function EditLicenseModal({ license, token, onClose, onSaved }: {
+  license: License
+  token: string
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [form, setForm] = useState<EditLicenseForm>({
+    customerId: license.customer_id,
+    customerName: license.customer_name ?? '',
+    licenseType: license.license_type,
+    maxUsers: license.max_users,
+    maxActivations: license.max_activations,
+    features: featureText(parseLicenseFeatures(license.features)),
+    notes: license.notes ?? '',
+  })
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault()
+    setBusy(true)
+    setError('')
+    try {
+      await requestJson(`/admin/licenses/${encodeURIComponent(license.key)}`, token, {
+        method: 'PUT',
+        body: JSON.stringify({
+          customerId: form.customerId,
+          customerName: form.customerName || null,
+          licenseType: form.licenseType,
+          maxUsers: Number(form.maxUsers),
+          maxActivations: Number(form.maxActivations),
+          features: parseFeatureInput(form.features),
+          notes: form.notes || null,
+        }),
+      })
+      onSaved()
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Salvataggio non riuscito')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const set = (key: keyof EditLicenseForm) => (e: ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+    setForm(current => ({ ...current, [key]: e.target.value }))
+  }
+
+  return (
+    <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="modal-box">
+        <div className="modal-header">
+          <h3>Modifica licenza</h3>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Chiudi">✕</button>
+        </div>
+        <p className="modal-note">Prodotto: <strong>{license.product_id}</strong> — La chiave licenza e la scadenza non cambiano. Per modificarle revoca e rigenera.</p>
+        <form className="form-grid" onSubmit={handleSubmit}>
+          <section className="form-section">
+            <label>
+              ID cliente
+              <input value={form.customerId} onChange={set('customerId')} required />
+            </label>
+            <label>
+              Nome cliente
+              <input value={form.customerName} onChange={set('customerName')} placeholder="ACME srl" />
+            </label>
+            <label>
+              Tipo licenza
+              <select value={form.licenseType} onChange={set('licenseType')}>
+                {LICENSE_TYPE_OPTIONS.map(type => <option key={type.id} value={type.id}>{type.label}</option>)}
+              </select>
+            </label>
+          </section>
+          <section className="form-section">
+            <label>
+              Utenti max
+              <input type="number" value={form.maxUsers} onChange={set('maxUsers')} min={1} />
+            </label>
+            <label>
+              Attivazioni max
+              <input type="number" value={form.maxActivations} onChange={set('maxActivations')} min={1} />
+            </label>
+            <FeaturePicker value={form.features} onChange={features => setForm(current => ({ ...current, features }))} />
+          </section>
+          <section className="form-section wide">
+            <label>
+              Note interne
+              <textarea value={form.notes} onChange={set('notes')} rows={3} />
+            </label>
+            {error && <p className="error">{error}</p>}
+            <div className="button-row">
+              <button type="submit" className="primary-button" disabled={busy}>{busy ? 'Salvataggio…' : 'Salva modifiche'}</button>
+              <button type="button" className="secondary-button" onClick={onClose}>Annulla</button>
+            </div>
+          </section>
+        </form>
+      </div>
+    </div>
   )
 }
 

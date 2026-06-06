@@ -741,3 +741,66 @@ textarea:focus {
     grid-template-columns: 1fr;
   }
 }
+
+/* ── Modal ─────────────────────────────────────────── */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(17, 24, 39, .55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.modal-box {
+  background: var(--surface);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  width: 100%;
+  max-width: 720px;
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 18px;
+  color: var(--text-muted);
+  padding: 4px 8px;
+  border-radius: 4px;
+  line-height: 1;
+}
+
+.modal-close:hover {
+  background: var(--surface-muted);
+  color: var(--text);
+}
+
+.modal-note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  background: var(--surface-muted);
+  border-radius: 6px;
+  padding: 10px 14px;
+}

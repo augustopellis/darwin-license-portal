@@ -14,6 +14,16 @@ export const adminRouter = Router()
 const ApplicationTypeSchema = z.enum(['desktop', 'hybrid', 'web'])
 const BindingModeSchema = z.enum(['none', 'workstation', 'server', 'tenant'])
 
+const UpdateLicenseSchema = z.object({
+  customerId: z.string().min(1).optional(),
+  customerName: z.string().nullable().optional(),
+  licenseType: z.enum(['trial', 'starter', 'professional', 'enterprise']).optional(),
+  maxUsers: z.number().int().positive().optional(),
+  maxActivations: z.number().int().positive().optional(),
+  features: z.array(z.string()).optional(),
+  notes: z.string().nullable().optional(),
+})
+
 const GenerateLicenseSchema = z.object({
   productId: z.string().min(1),
   customerId: z.string().min(1),
@@ -320,6 +330,61 @@ adminRouter.put('/licenses/:key/revoke', (req, res) => {
   }
 
   res.json({ revoked: true, key })
+})
+
+/**
+ * PUT /api/admin/licenses/:key
+ * Modifica i metadati di una licenza esistente.
+ */
+adminRouter.put('/licenses/:key', (req, res) => {
+  const { key } = req.params
+  const parse = UpdateLicenseSchema.safeParse(req.body)
+  if (!parse.success) {
+    res.status(400).json({ error: 'INVALID_REQUEST', message: parse.error.flatten() })
+    return
+  }
+
+  const current = db.prepare('SELECT * FROM licenses WHERE key = ?').get(key) as Record<string, unknown> | undefined
+  if (!current) {
+    res.status(404).json({ error: 'NOT_FOUND', message: 'Licenza non trovata.' })
+    return
+  }
+
+  const d = parse.data
+  db.prepare(`
+    UPDATE licenses
+    SET customer_id = ?, customer_name = ?, license_type = ?,
+        max_users = ?, max_activations = ?, features = ?, notes = ?
+    WHERE key = ?
+  `).run(
+    d.customerId ?? current.customer_id,
+    d.customerName !== undefined ? d.customerName : current.customer_name,
+    d.licenseType ?? current.license_type,
+    d.maxUsers ?? current.max_users,
+    d.maxActivations ?? current.max_activations,
+    d.features ? JSON.stringify(normalizeFeatures(d.features)) : current.features,
+    d.notes !== undefined ? d.notes : current.notes,
+    key
+  )
+
+  const updated = db.prepare('SELECT * FROM licenses WHERE key = ?').get(key)
+  res.json({ license: updated })
+})
+
+/**
+ * DELETE /api/admin/licenses/:key
+ * Elimina definitivamente una licenza dal database.
+ */
+adminRouter.delete('/licenses/:key', (req, res) => {
+  const { key } = req.params
+  const result = db.prepare('DELETE FROM licenses WHERE key = ?').run(key)
+
+  if (result.changes === 0) {
+    res.status(404).json({ error: 'NOT_FOUND', message: 'Licenza non trovata.' })
+    return
+  }
+
+  res.json({ deleted: true, key })
 })
 
 /**
